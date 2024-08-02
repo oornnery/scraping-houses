@@ -30,8 +30,8 @@ lint = 'ruff check . && ruff check . --diff'
 format = 'ruff check . --fix && ruff format .'
 run = 'python scraping_houses/main.py'
 cli = 'python scraping_houses/cli.py'
-server = 'fastapi scraping_houses/app.py
-dev = 'fastapi dev scraping_houses/app.py
+server = 'fastapi scraping_houses/app.py'
+dev = 'fastapi dev scraping_houses/app.py'
 post_test = 'coverage html'
 test = 'pytest -s -x --cov=scraping_houses -vv'
 post_test = 'coverage html'
