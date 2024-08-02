@@ -34,7 +34,6 @@ server = 'fastapi scraping_houses/app.py'
 dev = 'fastapi dev scraping_houses/app.py'
 post_test = 'coverage html'
 test = 'pytest -s -x --cov=scraping_houses -vv'
-post_test = 'coverage html'
 
 [tool.pytest.ini_options]
 pythonpath = "."
