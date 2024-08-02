@@ -25,6 +25,34 @@ taskipy = "^1.13.0"
 ruff = "^0.5.5"
 httpx = "^0.27.0"
 
+[tool.taskipy.tasks]
+lint = 'ruff check . && ruff check . --diff'
+format = 'ruff check . --fix && ruff format .'
+run = 'python scraping_houses/main.py'
+cli = 'python scraping_houses/cli.py'
+server = 'fastapi scraping_houses/app.py
+dev = 'fastapi dev scraping_houses/app.py
+post_test = 'coverage html'
+test = 'pytest -s -x --cov=scraping_houses -vv'
+post_test = 'coverage html'
+
+[tool.pytest.ini_options]
+pythonpath = "."
+addopts = '-p no:warnings'
+
+[tool.ruff]
+line-length = 79
+
+[tool.ruff.lint]
+preview = true
+select = ['I', 'F', 'E', 'W', 'PL', 'PT']
+ignore = ['E402', 'F811']
+
+[tool.ruff.format]
+preview = true
+quote-style = 'single'
+
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
