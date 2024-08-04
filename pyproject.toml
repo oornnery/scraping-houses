@@ -13,9 +13,13 @@ geopy = "^2.4.1"
 sqlalchemy = "^2.0.31"
 rich = "^13.7.1"
 typer = "^0.12.3"
-pydantic = "^2.8.2"
+pydantic = {extras = ["email"], version = "^2.8.2"}
 pydantic-settings = "^2.4.0"
 nicegui = "^1.4.30"
+playwright = "^1.45.1"
+proxy-py = "^2.4.4"
+playwright-stealth = "^1.0.6"
+alembic = "^1.13.2"
 
 
 [tool.poetry.group.dev.dependencies]
@@ -32,8 +36,9 @@ run = 'python scraping_houses/main.py'
 cli = 'python scraping_houses/cli.py'
 server = 'fastapi scraping_houses/app.py'
 dev = 'fastapi dev scraping_houses/app.py'
-post_test = 'coverage html'
+pre_test = 'task lint'
 test = 'pytest -s -x --cov=scraping_houses -vv'
+post_test = 'coverage html'
 
 [tool.pytest.ini_options]
 pythonpath = "."
