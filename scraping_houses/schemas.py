@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import List
+from typing import List, Union
 
 from pydantic import BaseModel, EmailStr
 
@@ -58,11 +58,11 @@ class ScrapingVivalrealConfig(BaseModel):
     contact_form: ContactForm
     base_url: str = 'https://www.vivareal.com.br'
     house_type: EnumHouseType = EnumHouseType.HENT
-    state: EnumState = EnumState.SP
-    country: EnumCountry = EnumCountry.SAO_PAULO
-    region: EnumRegion = EnumRegion.SOUTH_ZONE
-    order_by_price: EnumOrderByPrice = EnumOrderByPrice.TOTAL_PRICE_ASC
-    property_type: List[PropertyType] = [PropertyType.HOUSE]
+    state: Union[EnumState, None] = EnumState.SP
+    country: Union[EnumCountry, None] = EnumCountry.SAO_PAULO
+    region: Union[EnumRegion, None] = None
+    order_by_price: Union[EnumOrderByPrice, None] = EnumOrderByPrice.TOTAL_PRICE_ASC
+    property_type: Union[List[PropertyType], None] = [PropertyType.HOUSE]
     rooms: int = 0
     min_price: int = 0
     max_price: int = 0
@@ -78,9 +78,6 @@ class ScrapingVivalrealConfig(BaseModel):
             url += f"/{self.country.value}"
         if self.region and self.country:
             url += f"/{self.region.value}"
-        if new_page:
-            self.page += 1
-            url += f"?pagina={self.page}"
         flags = []
         if self.rooms:
             flags.append(f"quartos={self.rooms}")
@@ -92,7 +89,11 @@ class ScrapingVivalrealConfig(BaseModel):
             flags.append(f"ordenar-por={self.order_by_price.value}")
         if self.property_type:
             property_type = ','.join([p.value for p in self.property_type])
+            url += f"/{self.property_type[0].value}"
             flags.append(f'tipos={property_type}')
+        if new_page:
+            self.page += 1
+            url += f"?pagina={self.page}"
         query_string = "&".join(flags)
         return f"{url}#{query_string}"
 

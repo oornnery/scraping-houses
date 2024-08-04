@@ -8,6 +8,8 @@ from playwright.sync_api import sync_playwright
 from scraping_houses.schemas import (
     ContactForm,
     ScrapingVivalrealConfig,
+    EnumCountry,
+    EnumOrderByPrice
 )
 from scraping_houses.scrapings.vivareal import ScrapingVivalreal
 
@@ -29,7 +31,8 @@ if __name__ == "__main__":
     )
     url_cfg = ScrapingVivalrealConfig(
         contact_form=contact_form,
-        # region='zona-sul',
-        country='sao-paulo',
+        country=EnumCountry.SAO_PAULO,
+        region=None,
+        order_by_price=EnumOrderByPrice.TOTAL_PRICE_ASC  
     )
     main(url_config=url_cfg)

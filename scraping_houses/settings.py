@@ -7,3 +7,5 @@ class Settings(BaseSettings):
     )
 
     DATABASE_URL: str
+    LOGS_PATH: str = './logs'
+    LOGS_SCREENSHOTS_PATH: str = './logs/screenshots'

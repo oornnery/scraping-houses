@@ -10,13 +10,16 @@ from scraping_houses.database import engine
 from scraping_houses.models import TableHouseVivaReal
 from scraping_houses.schemas import HouseVivaReal, ScrapingVivalrealConfig
 from scraping_houses.utils import cl, genetate_panel, logger
+from scraping_houses.settings import Settings
+
 
 
 class ScrapingVivalreal:
     viewport_size = {'width': 1920, 'height': 1080}
     user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\
         (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36'
-
+    settings = Settings()
+    
     def __init__(self, browser: Browser, url_config: ScrapingVivalrealConfig):
         self.browser = browser
         self.page = self.new_page()
@@ -59,19 +62,35 @@ class ScrapingVivalreal:
         except Exception:
             return 'undefined'
 
+    def screenshot(
+            self,
+            name: str = 'screenshot',
+            error: bool = False,
+            page: Page = None
+        ) -> None:
+        if not page:
+            page = self.page
+        if error:
+            page.screenshot(path=f'{name}_error_{time.time()}.png', full_page=True)
+        else:
+            page.screenshot(path=f'{name}_{time.time()}.png', full_page=True)
+        
     def extract_property_info(self) -> Generator[HouseVivaReal, None, None]:
-        self.page.wait_for_selector('div.results-list')
-        elements = self.page.query_selector_all(
-            'article.property-card__container'
-        )
-        for i, element in enumerate(elements):
-            logger.info(f'[SCRAPING] => [ELEMENT] {i}')
-            logger.info(f'[BROWSER] => [PAGE] {self.current_page}')
-            url = self.url_cfg.base_url + self.query_selector(
-                element,
-                'a.property-card__content-link'
-            ).get_attribute('href')
-            yield self.extract_property_details(url)
+        try: 
+            self.page.wait_for_selector('div.results-list')
+            elements = self.page.query_selector_all(
+                'article.property-card__container'
+            )
+            for i, element in enumerate(elements):
+                logger.info(f'[SCRAPING] => [ELEMENT] {i}')
+                logger.info(f'[BROWSER] => [PAGE] {self.current_page}')
+                url = self.url_cfg.base_url + self.query_selector(
+                    element,
+                    'a.property-card__content-link'
+                ).get_attribute('href')
+                yield self.extract_property_details(url)
+        except Exception:
+            self.screenshot(error=True)
 
     def extract_property_details(
             self,
@@ -121,23 +140,25 @@ class ScrapingVivalreal:
             form = page.query_selector(
             '.base-page__main-content__right .lead-message-form'
             )
-            form.wait_for_element_state('visible')
             forms = self.query_selector(form, 'input', all=True)
-            forms[0].fill(self.url_cfg.contact_form.name)
-            forms[1].fill(self.url_cfg.contact_form.email)
-            forms[2].fill(self.url_cfg.contact_form.phone)
+            if forms:
+                forms[0].fill(self.url_cfg.contact_form.name)
+                forms[1].fill(self.url_cfg.contact_form.email)
+                forms[2].fill(self.url_cfg.contact_form.phone)
             page.screenshot(path=f'logs/screenshots/{id_}.png')
             logger.info(f'[BROWSER] => [SCREENSHOT] {id_}.png')
-            page.click(
-                '.base-page__main-content__right .lead-message-form button'
-            )
-            modal = page.query_selector('.lead-modal__message')
-            # modal.wait_for_element_state('visible')
-            contacts = [
-                element.get_attribute('href').replace('tel:', '').strip()
-                for element in self.query_selector(modal, 'a', all=True)
-                    or []
-            ]
+            
+            contacts = []
+            if form:
+                page.click(
+                    '.base-page__main-content__right .lead-message-form button'
+                )
+                modal = page.query_selector('.lead-modal__message')
+                contacts = [
+                    element.get_attribute('href').replace('tel:', '').strip()
+                    for element in self.query_selector(modal, 'a', all=True)
+                        or []
+                ]
             images = [
                 image.get_attribute('srcset') for image in
                     self.query_selector(
@@ -146,7 +167,8 @@ class ScrapingVivalreal:
                         all=True
                     ) or []
             ]
-            yield HouseVivaReal(
+            page.close()
+            return HouseVivaReal(
                 title=title,
                 house_type=house_type,
                 price=price,
@@ -159,7 +181,6 @@ class ScrapingVivalreal:
                 url=url,
                 images=images
             )
-        page.close()
 
     @staticmethod
     def add_house_to_db(house: HouseVivaReal):
@@ -201,14 +222,15 @@ class ScrapingVivalreal:
             else:
                 url = self.url_cfg.build_url()
             self.page.goto(url)
-            logger.info(f'[BROWSER] => [GOTO] {url} - {self.last_page}')
-            for p in self.extract_property_info():
-                self.extracted_properties.append(p)
-                self.add_house_to_db(p)
-                cl.print(genetate_panel(p))
-                # yield p
-            self.last_page += 1
-            end_time = time.time()
-            logger.info(f'Elapsed time: {end_time - start_time} seconds')
+            with self.page.expect_navigation():
+                logger.info(f'[BROWSER] => [GOTO] {url} - {self.last_page}')
+                for p in self.extract_property_info():
+                    self.extracted_properties.append(p)
+                    cl.print(genetate_panel(p))
+                    self.add_house_to_db(p)
+                    # yield p
+                self.last_page += 1
+                end_time = time.time()
+                logger.info(f'Elapsed time: {end_time - start_time} seconds')
 
         return self.extracted_properties
