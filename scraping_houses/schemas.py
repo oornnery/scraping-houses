@@ -1,49 +1,59 @@
+import re
 from enum import Enum
 from typing import List, Union
+from typing_extensions import Unpack
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, ConfigDict
 
+from scraping_houses.settings import Settings
 
-class ContactForm(BaseModel):
-    name: str
-    email: str
-    phone: str
+settings = Settings()
 
-
-class EnumHouseType(Enum):
+class FlagHouseType(Enum):
     SALE = 'venda'
     HENT = 'aluguel'
     LAUNCH = 'imoveis-lancamento'
 
+    def __str__(self) -> str:
+        return self.value
 
-class EnumState(Enum):
+
+class FlagState(Enum):
     SP = 'sp'
 
+    def __str__(self) -> str:
+        return self.value
 
-class EnumCountry(Enum):
+
+class FlagCountry(Enum):
     SAO_PAULO = 'sao-paulo'
 
+    def __str__(self) -> str:
+        return self.value
 
-class EnumRegion(Enum):
+
+class FlagRegion(Enum):
     SOUTH_ZONE = 'zona-sul'
     NORTH_ZONE = 'zona-norte'
     CENTER_ZONE = 'zona-central'
     WEST_ZONE = 'zona-oeste'
     EAST_ZONE = 'zona-leste'
+    
+    def __str__(self) -> str:
+        return self.value
 
 
-# ordenar-por=preco-total:ASC
-# ordenar-por=preco-total:DESC
-# ordenar-por=preco:ASC
-# ordenar-por=preco:DESC
-class EnumOrderByPrice(Enum):
-    PRICE_ASC = 'preco:ASC'
-    PRICE_DESC = 'preco:DESC'
+class FlagOrderByPrice(Enum):
     TOTAL_PRICE_ASC = 'preco-total:ASC'
     TOTAL_PRICE_DESC = 'preco-total:DESC'
+    PRICE_ASC = 'preco:ASC'
+    PRICE_DESC = 'preco:DESC'
+    
+    def __str__(self) -> str:
+        return self.value
 
 
-class PropertyType(Enum):
+class FlagPropertyType(Enum):
     HOUSE = 'casa_residencial'
     APARTMENT = 'apartamento_residencial'
     CONDOMINIUM = 'condominio_residencial'
@@ -52,74 +62,58 @@ class PropertyType(Enum):
     KITNET = 'kitnet_residencial'
     FLAT = 'flat_residencial'
     ROOF = 'cobertura_residencial'
+    
+    def __str__(self) -> str:
+        return self.value
 
 
-class ScrapingVivalrealConfig(BaseModel):
-    contact_form: ContactForm
-    base_url: str = 'https://www.vivareal.com.br'
-    house_type: EnumHouseType = EnumHouseType.HENT
-    state: Union[EnumState, None] = EnumState.SP
-    country: Union[EnumCountry, None] = EnumCountry.SAO_PAULO
-    region: Union[EnumRegion, None] = None
-    order_by_price: Union[EnumOrderByPrice, None] = EnumOrderByPrice.TOTAL_PRICE_ASC
-    property_type: Union[List[PropertyType], None] = [PropertyType.HOUSE]
+class UrlConfig(BaseModel):
+    url_base: str = settings.URL_VIVAREAL
+    house_type: FlagHouseType = FlagHouseType.HENT
+    state: Union[FlagState, None] = FlagState.SP
+    country: Union[FlagCountry, None] = FlagCountry.SAO_PAULO
+    property_type: Union[List[FlagPropertyType], None] = None
+    region: Union[FlagRegion, None] = None
+    order_by_price: Union[FlagOrderByPrice, None] = None
     rooms: int = 0
     min_price: int = 0
     max_price: int = 0
-    page: int = 1
-
-    def build_url(self, new_page: bool = False) -> str:
-        url = self.base_url
-        if self.house_type:
-            url += f"/{self.house_type.value}"
-        if self.state and self.house_type:
-            url += f"/{self.state.value}"
-        if self.country and self.state:
-            url += f"/{self.country.value}"
-        if self.region and self.country:
-            url += f"/{self.region.value}"
-        flags = []
-        if self.rooms:
-            flags.append(f"quartos={self.rooms}")
-        if self.min_price:
-            flags.append(f"preco-desde={self.min_price}")
-        if self.max_price:
-            flags.append(f"preco-ate={self.max_price}")
-        if self.order_by_price:
-            flags.append(f"ordenar-por={self.order_by_price.value}")
-        if self.property_type:
-            property_type = ','.join([p.value for p in self.property_type])
-            url += f"/{self.property_type[0].value}"
-            flags.append(f'tipos={property_type}')
-        if new_page:
-            self.page += 1
-            url += f"?pagina={self.page}"
-        query_string = "&".join(flags)
-        return f"{url}#{query_string}"
 
 
-class House(BaseModel):
+class Property(BaseModel):
     url: str
-    description: str
-    address: str
-    price: str
-    total_area: str
-    rooms: str
-    bedrooms: str
-    photos: List[str]
-    name: str
-    email: EmailStr
-    contacts: str
+    url_req: str = ''
+    status_code: int = 0
+    reason: str = ''
+    local_ip: str = ''
+    primary_ip: str = ''
+    title: str = ''
+    property_type: str = ''
+    price: str = ''
+    additional_price: List[str] = []
+    address: str = ''
+    properties: List[str] = []
+    description: List[str] = []
+    images: List[str] = []
+    published_at: str = ''
+    
+    @property
+    def property_id(self) -> str:
+        return re.findall(r'id-(\d+)', self.url)[0]
+    
+    def __str__(self) -> str:
+        return f'<Property {self.property_id}>'
 
 
-class HouseVivaReal(BaseModel):
+class Page(BaseModel):
     url: str
-    title: str
-    price: str
-    additional_price: List[str]
-    address: str
-    properties: List[str]
-    house_type: str
-    images: List[str]
-    description: str
-    published_at: str
+    status_code: int
+    reason: str
+    primary_ip: str
+    local_ip: str
+    html: str
+    properties: List[Property]
+    page: int
+
+    def __str__(self) -> str:
+        return f'<Page {self.page} ({self.url}) Property {len(self.properties)}>'

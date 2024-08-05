@@ -33,6 +33,6 @@ if __name__ == "__main__":
         contact_form=contact_form,
         country=EnumCountry.SAO_PAULO,
         region=None,
-        order_by_price=EnumOrderByPrice.TOTAL_PRICE_ASC  
+        rooms=2
     )
     main(url_config=url_cfg)

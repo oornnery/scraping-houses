@@ -20,6 +20,7 @@ playwright = "^1.45.1"
 proxy-py = "^2.4.4"
 playwright-stealth = "^1.0.6"
 alembic = "^1.13.2"
+curl-cffi = "^0.7.1"
 
 
 [tool.poetry.group.dev.dependencies]
@@ -39,6 +40,8 @@ dev = 'fastapi dev scraping_houses/app.py'
 pre_test = 'task lint'
 test = 'pytest -s -x --cov=scraping_houses -vv'
 post_test = 'coverage html'
+db_migrate = 'alembic revision --autogenerate'
+db_upgrade = 'alembic upgrade head'
 
 [tool.pytest.ini_options]
 pythonpath = "."

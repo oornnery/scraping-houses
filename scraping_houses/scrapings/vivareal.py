@@ -1,236 +1,305 @@
-import re
-import time
-from typing import Generator, List, Union
+import re, sys, os
+from enum import Enum
+from typing import List, Union
+from random import randint
+from datetime import datetime
+import asyncio
 
-from playwright.sync_api import Browser, ElementHandle, Page
-from playwright_stealth import stealth_sync
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+
+from scraping_houses.utils import cl, panel_grid, logger
+from scraping_houses.database import engine
+from scraping_houses.schemas import (
+    UrlConfig,
+    Property,
+    Page,
+)
+from scraping_houses.models import TableProperty
+
+
+from curl_cffi.requests import AsyncSession, Request
+from pydantic import BaseModel
+from parsel import Selector
 from sqlalchemy.orm import Session
 
-from scraping_houses.database import engine
-from scraping_houses.models import TableHouseVivaReal
-from scraping_houses.schemas import HouseVivaReal, ScrapingVivalrealConfig
-from scraping_houses.utils import cl, genetate_panel, logger
-from scraping_houses.settings import Settings
-
+from rich.panel import Panel
+from rich.columns import Columns
+from rich.table import Table
+from rich.progress import Progress
 
 
 class ScrapingVivalreal:
-    viewport_size = {'width': 1920, 'height': 1080}
-    user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\
-        (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36'
-    settings = Settings()
-    
-    def __init__(self, browser: Browser, url_config: ScrapingVivalrealConfig):
-        self.browser = browser
-        self.page = self.new_page()
-        stealth_sync(self.page)
+    def __init__(self, url_config: UrlConfig = None):
         self.url_cfg = url_config
-        self.last_page = 0
-        self.extracted_properties = []
+        self.pages: List[Page] = []
+        self.total_properties: int = 0
+        self.last_page: int = 0
+        
+        if not self.url_cfg:
+            self.url_cfg = UrlConfig()
 
     @property
-    def current_page(self) -> int:
+    def total_urls(self) -> int:
+        return len([[p.url for p in p.properties] for p in self.pages])
+
+    @property
+    def total_pages(self):
+        return self.total_properties // 36
+
+    def build_url(self, page: int = 0) -> str:
+        cfg = self.url_cfg
+        url = f"/{cfg.house_type}"
+        if cfg.state:
+            url += f"/{cfg.state}"
+        if cfg.country and cfg.state:
+            url += f"/{cfg.country}"
+        if cfg.region and self.country:
+            url += f"/{cfg.region}"
+        # flags
+        flags = []
+        if cfg.property_type:
+            property_type = ','.join(cfg.property_type)
+            flags.append(f'tipos={property_type}')
+        if cfg.rooms:
+            flags.append(f"quartos={cfg.rooms}")
+        if cfg.min_price:
+            flags.append(f"preco-desde={cfg.min_price}")
+        if cfg.max_price:
+            flags.append(f"preco-ate={cfg.max_price}")
+        if cfg.order_by_price:
+            flags.append(f"ordenar-por={cfg.order_by_price}")
+        url += f"?pagina={page}"
+        query_string = "&".join(flags)
+        return f"{url}#{query_string}"
+
+    def next_page(self):
+        url = self.build_url(self.last_page + 1)
+        self.last_page += 1
+        return url
+
+    def get_urls(self, html: str) -> List[Property]:
         try:
-            return int(self.page.query_selector(
-                'button.js-change-page[data-active]'
-            ).get_attribute('data-page'))
-        except Exception:
+            sel = Selector(html)
+            return [
+                Property(url=url) for url in
+                sel.css(
+                    'article.property-card__container \
+                        a.property-card__content-link::attr(href)'
+                ).getall()
+            ]
+        except Exception as e:
+            logger.error(f'[SELECTOR] {e}')
+            return []
+
+    def get_total_properties(self, html: str) -> int:
+        try:
+            return int(Selector(html).css(
+                '.results-summary__data strong.results-summary__count::text'
+            ).get().replace('.', ''))
+        except Exception as e:
+            logger.error(f'[SELECTOR] {e}')
             return 0
 
-    def new_page(self) -> Page:
-        return self.browser.new_page(
-            viewport=self.viewport_size,
-            user_agent=self.user_agent
-        )
-
-    @staticmethod
-    def query_selector(
-        element,
-        selector,
-        all: bool = False
-    ) -> Union[ElementHandle, List[ElementHandle], None]:
+    def get_current_page(self, html: str) -> int:
         try:
-            return element.query_selector_all(selector) if all\
-                else element.query_selector(selector)
-        except Exception:
-            return None
+            return int(Selector(html).css(
+                'button.js-change-page[data-active]::attr(data-page)'
+            ).get())
+        except Exception as e:
+            logger.error(f'[SELECTOR] {e}')
+            return 0
 
-    @staticmethod
-    def parse_to_string(text: str) -> str:
-        try:
-            return re.sub(r'R\$\s*|\xa0|\n', '', str(text).strip())
-        except Exception:
-            return 'undefined'
+    def extract_all_content_from_page(
+        self,
+        html: str,
+        property: Property,
+    ) -> Property:
+        s = Selector(html)
+        p = property
+        p.title = s.css('h1.description__title::text').get()
+        p.property_type = s.css(
+            '.price-value-wrapper p#business-type-info::text'
+        ).get()
+        p.price = s.css('p.price-info-value::text').get()
+        p.additional_price = s.css(
+            'p.additional-price-info--value::text'
+        ).getall()
+        p.address = s.css('p.address-info-value::text').get()
+        p.properties = s.css('p.amenities-item::text').getall()
+        p.description = s.css(
+            'div.desktop-only-container .description__content--text::text'
+        ).get()
+        p.published_at = s.css(
+            'div.desktop-only-container span.description__created-at::text'
+        ).get()
+        p.images = s.css(
+            'li.carousel-photos--item img::attr(srcset)'
+        ).getall()
+        return p
 
-    def screenshot(
-            self,
-            name: str = 'screenshot',
-            error: bool = False,
-            page: Page = None
-        ) -> None:
-        if not page:
-            page = self.page
-        if error:
-            page.screenshot(path=f'{name}_error_{time.time()}.png', full_page=True)
-        else:
-            page.screenshot(path=f'{name}_{time.time()}.png', full_page=True)
-        
-    def extract_property_info(self) -> Generator[HouseVivaReal, None, None]:
-        try: 
-            self.page.wait_for_selector('div.results-list')
-            elements = self.page.query_selector_all(
-                'article.property-card__container'
-            )
-            for i, element in enumerate(elements):
-                logger.info(f'[SCRAPING] => [ELEMENT] {i}')
-                logger.info(f'[BROWSER] => [PAGE] {self.current_page}')
-                url = self.url_cfg.base_url + self.query_selector(
-                    element,
-                    'a.property-card__content-link'
-                ).get_attribute('href')
-                yield self.extract_property_details(url)
-        except Exception:
-            self.screenshot(error=True)
 
-    def extract_property_details(
-            self,
-            url: str
-        ) -> Generator[HouseVivaReal, None, None]:
-        page = self.new_page()
-        page.goto(url)
-        logger.info(f'[BROWSER] => [GOTO] {url}')
-        with page.expect_navigation():
-            id_ = re.sub(r'[^a-zA-Z0-9\s+]', '', url.split('id')[1])
-            title = self.query_selector(page, 'h1.description__title')\
-                .inner_text() or 'undefined'
-            price = self.query_selector(
-                page,
-                'p.price-info-value'
-            ).inner_text()
-            additional_price = [
-                element.inner_text() for element in self.query_selector(
-                    page,
-                    'p.additional-price-info--value',
-                    all=True
-                ) or []
-            ]
-            address = self.query_selector(page, 'p.address-info-value')\
-                .inner_text()
-            properties = [
-                element.inner_text() for element in self.query_selector(
-                    page,
-                    'p.amenities-item',
-                    all=True
-                ) or []
-            ]
-            house_type = self.query_selector(
-                page,
-                '.price-value-wrapper p#business-type-info'
-            ).inner_text()
-            description = self.query_selector(
-                page,
-                'div.desktop-only-container .description__content--text'
-            ).inner_text()
-            published_at = self.query_selector(
-                page,
-                'div.desktop-only-container span.description__created-at'
-            ).inner_text()
+    async def get_all_content_from_page(
+            self, 
+            session: AsyncSession, 
+            page: Page
+        ) -> Page:
+            for p in page.properties:
+                if self.property_exists_on_db(p):
+                    logger.info(f'[MAIN] => {p} already exists on db, skipping..')
+                    continue
+                logger.info(f'[REQUEST] => {p.url}')
+                req = await session.get(p.url)
+                logger.info(f'[RESPONSE] <= {req}')
+                p = self.extract_all_content_from_page(req.text, p)
+                p.status_code=req.status_code
+                p.reason=req.reason
+                p.local_ip=req.local_ip
+                p.primary_ip=req.primary_ip
+                await self.add_property_to_db(p)
+                await asyncio.sleep(randint(1,5))
+            return page
 
-            # Contact form
-            form = page.query_selector(
-            '.base-page__main-content__right .lead-message-form'
-            )
-            forms = self.query_selector(form, 'input', all=True)
-            if forms:
-                forms[0].fill(self.url_cfg.contact_form.name)
-                forms[1].fill(self.url_cfg.contact_form.email)
-                forms[2].fill(self.url_cfg.contact_form.phone)
-            page.screenshot(path=f'logs/screenshots/{id_}.png')
-            logger.info(f'[BROWSER] => [SCREENSHOT] {id_}.png')
-            
-            contacts = []
-            if form:
-                page.click(
-                    '.base-page__main-content__right .lead-message-form button'
-                )
-                modal = page.query_selector('.lead-modal__message')
-                contacts = [
-                    element.get_attribute('href').replace('tel:', '').strip()
-                    for element in self.query_selector(modal, 'a', all=True)
-                        or []
-                ]
-            images = [
-                image.get_attribute('srcset') for image in
-                    self.query_selector(
-                        page,
-                        'li.carousel-photos--item img',
-                        all=True
-                    ) or []
-            ]
-            page.close()
-            return HouseVivaReal(
-                title=title,
-                house_type=house_type,
-                price=price,
-                additional_price=additional_price,
-                address=address,
-                properties=properties,
-                description=description,
-                published_at=published_at,
-                contact=contacts,
-                url=url,
-                images=images
-            )
-
-    @staticmethod
-    def add_house_to_db(house: HouseVivaReal):
+    def property_exists_on_db(self, property: Property) -> bool:
         with Session(engine) as session:
-            db_house = session.query(TableHouseVivaReal).filter_by(
-                url=house.url
+            req = session.query(TableProperty).filter_by(
+                url=property.url
             ).first()
-            if db_house:
-                session.delete(db_house)
-                logger.info(f'[DB] => [DELETE] {db_house}')
-            db_house: TableHouseVivaReal = TableHouseVivaReal(
-                url=house.url,
-                title=house.title,
-                price=house.price,
-                additional_price=house.additional_price,
-                address=house.address,
-                properties=house.properties,
-                house_type=house.house_type,
-                images=house.images,
-                description=house.description,
-                published_at=house.published_at
+            if req:
+                logger.info(f'[DB] => [EXIST] {req}')
+                return True
+            logger.info(f'[DB] => [NOT EXIST] {req}')
+            return False
+
+    @staticmethod
+    async def add_property_to_db(property: Property):
+        with Session(engine) as session:         
+            p = property
+            db_house: TableProperty = TableProperty(
+                url=p.url,
+                status_code=p.status_code,
+                reason=p.reason,
+                local_ip=p.local_ip,
+                primary_ip=p.primary_ip,
+                title=p.title,
+                property_type=p.property_type,
+                price=p.price,
+                additional_price=p.additional_price,
+                address=p.address,
+                properties=p.properties,
+                description=p.description,
+                images=p.images,
+                published_at=p.published_at,
+                property_id=p.property_id,
             )
             session.add(db_house)
             session.commit()
             session.refresh(db_house)
             logger.info(f'[DB] => [ADD] {db_house}')
-
         return db_house
 
-    def run(self):
-        logger.info('Starting scraping (VivaReal)...')
-        while True:
-            start_time = time.time()
-            if self.last_page > self.url_cfg.page:
-                logger.info('End scraping (VivaReal)...')
-                break
-            if self.last_page >= 1:
-                url = self.url_cfg.build_url(new_page=True)
-            else:
-                url = self.url_cfg.build_url()
-            self.page.goto(url)
-            with self.page.expect_navigation():
-                logger.info(f'[BROWSER] => [GOTO] {url} - {self.last_page}')
-                for p in self.extract_property_info():
-                    self.extracted_properties.append(p)
-                    cl.print(genetate_panel(p))
-                    self.add_house_to_db(p)
-                    # yield p
-                self.last_page += 1
-                end_time = time.time()
-                logger.info(f'Elapsed time: {end_time - start_time} seconds')
+    
+    def panel_page(self, page: Page) -> Panel:
+        logger.info(f'[RICH] => {page}')
+        return Panel(
+            Columns([
+                Panel(
+                    panel_grid(
+                            [   (
+                                    f'Url: {p.url}',
+                                    f'Status: {p.property_id}'
+                                ),
+                                (
+                                    f'Status code: {p.status_code}',
+                                    f'Price: {p.price}'
+                                ),
+                                (
+                                    f'Reason: {p.reason}',
+                                    f'Additional price: {p.additional_price}'
+                                    ),
+                                (
+                                    f'Local IP: {p.local_ip}',
+                                    f'Address: {p.address}'
+                                ),
+                                (
+                                    f'Primary IP: {p.primary_ip}',
+                                    f'Published at: {p.published_at}'
+                                ),
+                            ]
+                        ),
+                    width=60,
+                    title=f'# {p.property_id} - {p.title}'
+                ) for p in page.properties
+                
+            ]),
+            expand=True,
+            title=f'{page.page} - {page.url} ({len(page.properties)})',
+        )
 
-        return self.extracted_properties
+    
+    async def run(self):
+        def status():
+            orde = 0
+            if len(self.pages) != 0:
+                orde = len(self.pages[-1].properties)
+            return Panel(
+                f'Ord: {orde}\n\
+                Url: {url}\n\
+                Page: {self.last_page} - {self.total_pages}',
+                title='Scraping...'
+            )
+        async with AsyncSession(
+            base_url=self.url_cfg.url_base,
+            impersonate='chrome',
+            allow_redirects=True
+            ) as s:
+            url = self.build_url()
+            with cl.status('Scraping...') as ss:
+                for _ in range(1, 100):
+                    ss.update(status())
+                    req = await s.get(url)
+                    urls = self.get_urls(req.text)
+                    if self.last_page == 0 or self.total_pages == 0:
+                        self.total_properties = self.get_total_properties(req.text)
+                    self.last_page = self.get_current_page(req.text)
+                    ss.update(status())
+                    #TODO: Verificar se o registro ja esta no banco de dados com base no ID
+                    #TODO: E se deveremos ignorar ou atualizar/criar um novo registro
+                    page = await self.get_all_content_from_page(
+                        s,
+                        Page(
+                            url=url,
+                            status_code=req.status_code,
+                            reason=req.reason,
+                            local_ip=req.local_ip,
+                            primary_ip=req.primary_ip,
+                            html=req.text,
+                            request_at=datetime.now(),
+                            properties=urls,
+                            page=self.last_page
+                        )
+                    )
+                    cl.print(self.panel_page(page))
+                    ss.update(status())
+                    self.pages.append(page)
+
+                    cl.print(
+                        Panel(
+                            panel_grid([
+                                (f'Last Page: {self.last_page}'),
+                                (f'Total pages: {self.total_pages}'),
+                                (f'Total properties: {self.total_properties}'),
+                                (f'Total urls: {self.total_urls}')
+                            ]),
+                            title='Resume',
+                        )
+                    )
+                    url = self.next_page()
+                    await asyncio.sleep(3)
+
+
+if __name__ == "__main__":
+    import asyncio
+    
+    asyncio.run(ScrapingVivalreal().run())

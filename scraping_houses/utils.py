@@ -6,7 +6,6 @@ from rich.panel import Panel
 from rich.table import Table
 
 # from scraping_houses.settings import Settings
-from scraping_houses.schemas import HouseVivaReal
 
 cl = Console()
 
@@ -23,18 +22,12 @@ logging.basicConfig(
 
 logger = logging.getLogger()
 
-
-def genetate_panel(property_info: HouseVivaReal) -> Panel:
+def panel_grid(items: list[tuple[str, str]]) -> Table:
     grid = Table.grid(expand=True)
-    grid.add_column(style='cyan')
-    grid.add_column()
-    items = property_info.__dict__.items()
+    grid.add_column(style='cyan', justify='left', no_wrap=True)
+    grid.add_column(style='green', justify='center')
+    grid.add_column(style='red', justify='right', no_wrap=True)
     for item in items:
-        grid.add_row(
-            f'[{item[0].upper()}] ::',
-            f'{item[1]}'
-        )
-    return Panel(
-        grid,
-        title=property_info.title
-    )
+        grid.add_row(item[0], '|', item[1])
+    return grid
+
